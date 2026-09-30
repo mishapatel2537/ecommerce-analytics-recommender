@@ -12,8 +12,6 @@ const productSchema = new mongoose.Schema(
 
 // Category filter on the product listing
 productSchema.index({ category: 1 });
-// Keyword search on the product listing
-productSchema.index({ name: 'text' });
 
 productSchema.set('toJSON', {
   transform: (doc, ret) => {

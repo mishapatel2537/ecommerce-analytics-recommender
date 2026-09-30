@@ -18,8 +18,13 @@ app.use((req, res) => {
 // Central error handler
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(err.status || 500).json({ message: err.message || 'Server error' });
+  // Bad input caught by Mongoose schema validation / type casting / malformed JSON
+  if (err.name === 'ValidationError' || err.name === 'CastError' || err.type === 'entity.parse.failed') {
+    return res.status(400).json({ message: err.message });
+  }
+  const status = err.status || 500;
+  if (status >= 500) console.error(err);
+  res.status(status).json({ message: err.message || 'Server error' });
 });
 
 module.exports = app;
