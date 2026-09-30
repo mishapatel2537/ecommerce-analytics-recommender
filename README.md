@@ -112,7 +112,9 @@ Work is split by **feature slice**: every member contributes to the **database, 
 | Method | Endpoint | Owner |
 |---|---|---|
 | POST | `/api/auth/signup`, `/api/auth/login` | A |
-| GET/POST/PUT/DELETE | `/api/products` | A |
+| GET | `/api/auth/me` | A |
+| GET/POST/PUT/DELETE | `/api/products`, `/api/products/:id` | A |
+| GET | `/api/products/categories` | A |
 | GET | `/api/analytics/sales-trend` | A |
 | GET/POST | `/api/cart`, `/api/orders` | B |
 | GET | `/api/analytics/top-products` | B |
@@ -147,19 +149,138 @@ ecommerce-analytics/
 
 ## Getting Started
 
-```bash
-# Server
-cd server
-cp .env.example .env       # set MONGO_URI and JWT_SECRET
-npm install
-npm run seed               # load sample data
-npm run dev
+### Prerequisites
 
-# Client
-cd client
+- Node.js 18 or newer
+- MongoDB running locally on `mongodb://127.0.0.1:27017`
+
+### 1. Server
+
+```bash
+cd server
+cp .env.example .env       # defaults work for local MongoDB; change JWT_SECRET
 npm install
-npm run dev
+npm run seed               # wipes and reloads users, products, orders
+npm run dev                # API on http://localhost:5000
 ```
+
+### 2. Client (in a second terminal)
+
+```bash
+cd client
+cp .env.example .env       # VITE_API_URL=http://localhost:5000/api
+npm install
+npm run dev                # app on http://localhost:5173
+```
+
+### 3. Log in
+
+| Account | Email | Password |
+|---|---|---|
+| Admin | `admin@shop.com` | `admin123` |
+| Customer | any seeded user, or sign up | `password123` |
+
+The admin dashboard is at `/admin`.
+
+### Server scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start the API with auto-reload (nodemon) |
+| `npm start` | Start the API |
+| `npm run seed` | Load 100 users, 50 products and 1,000 orders (same data on every run) |
+| `npm run bench` | Before/after timing for the `orders` compound index (see [docs/indexing-notes.md](docs/indexing-notes.md)) |
+
+### Seed data
+
+`npm run seed` wipes and reloads the `users`, `products` and `orders` collections. It does not touch `reviews`. The data is built so every pipeline has something to find:
+
+- **Orders:** 1,000 orders over the last 18 months, with a November/December peak and steady growth.
+- **Order status:** each order is `pending`, `shipped`, `delivered` or `cancelled`, always lowercase. The sales trend leaves out cancelled orders.
+- **Customers:** a mix of loyal, regular and occasional buyers, for spend-tier segments.
+- **Products:** a few best sellers and a long tail, for top products. Five products are low on stock (under 10).
+- **Bought together:** twelve pairs of products often ordered together, such as Shampoo + Conditioner and Smartphone X + Phone Case, for "also bought".
+
+## API Reference (Person A)
+
+Send the token from signup or login as `Authorization: Bearer <token>`. Errors come back as `{ "message": "..." }` with status 400, 401, 403, 404 or 409.
+
+### Auth
+
+```http
+POST /api/auth/signup      { "name": "Asha Rao", "email": "asha@example.com", "password": "secret1" }
+POST /api/auth/login       { "email": "admin@shop.com", "password": "admin123" }
+  -> 200 { "token": "eyJ...", "user": { "_id", "name", "email", "role", "createdAt" } }
+
+GET  /api/auth/me          (logged in) -> { "user": { ... } }
+```
+
+Signup always creates a `customer`. The only admin is the one the seed script creates.
+
+### Products
+
+```http
+GET /api/products?search=lap&category=Electronics&minPrice=10&maxPrice=500&inStock=true&sort=price_asc&page=1&limit=12
+  -> { "products": [...], "total": 2, "page": 1, "pages": 1 }
+
+GET    /api/products/categories   -> { "categories": [{ "category": "Books", "count": 8 }, ...] }
+GET    /api/products/:id          -> { "product": { ... } }
+POST   /api/products              (admin) { "name", "category", "price", "stock" }
+PUT    /api/products/:id          (admin) any of those fields
+DELETE /api/products/:id          (admin)
+```
+
+- `sort` is one of `name_asc` (the default), `price_asc`, `price_desc` or `newest`.
+- `search` matches any part of the product name and ignores case.
+
+### Sales trend (admin)
+
+```http
+GET /api/analytics/sales-trend?from=2026-01-01&to=2026-06-30
+GET /api/analytics/sales-trend?from=2026-01-01&productId=<productId>
+  -> {
+       "from": "...", "to": "...", "productId": null,
+       "totals": { "revenue": 44072.76, "orders": 293, "units": 824 },
+       "data": [ { "period": "2026-01", "year": 2026, "month": 1, "revenue": 5857.8, "orders": 42, "units": 120 }, ... ]
+     }
+```
+
+- `from` and `to` are optional; leave both out to get all months.
+- `to` includes the whole day you give it.
+- Months with no orders are left out of `data`. The chart fills them in with zero.
+- The pipeline and the index are explained in [docs/indexing-notes.md](docs/indexing-notes.md).
+
+## Plugging In Your Feature (Persons B and C)
+
+**Server**
+- **Register your route file:** add one line to `server/src/routes/index.js`. The lines for B and C are already there, commented out.
+- **Add your analytics endpoint:** add one `router.get(...)` line to `server/src/routes/analyticsRoutes.js`. Every route in that file already requires an admin login.
+- **Protect your own routes:**
+
+  ```js
+  const auth = require('../middleware/auth');                 // sets req.user = { id, role }
+  const requireAdmin = require('../middleware/requireAdmin');  // use after auth
+  router.post('/', auth, checkout);
+  ```
+
+- **Order data:** the seed script writes orders straight to the `orders` collection, using the shared Order shape above. Person B's `Order.js` model will read the same documents.
+- **Order index:** `orders` already has the compound index `{ orderDate: 1, "items.product": 1 }`. Top-products queries that filter by date can use it too.
+
+**Client**
+- **Pages:** add your routes to `client/src/App.jsx`. There's a comment marking where B's pages go. Pages that need a login go inside `<Route element={<ProtectedRoute />}>`.
+- **API calls:** use `import api, { errorMessage } from '../api/axios'`. It sends the token for you. If the server rejects the token, the user is logged out automatically.
+- **Login info:** `useAuth()` from `context/AuthContext.jsx` gives you `{ user, isAdmin, login, signup, logout }`.
+- **Dashboard panels:** in `pages/AdminDashboard.jsx`, swap your placeholder for your chart:
+
+  ```jsx
+  <DashboardPanel title="Top products" description="...">
+    <TopProductsChart from={range.from} to={range.to} />
+  </DashboardPanel>
+  ```
+
+  `from` and `to` are `YYYY-MM-DD` strings, or `''` when a side has no limit. They come from the dashboard's date filter, so all three charts show the same period. `DashboardLayout.jsx` also exports `SegmentedControl` if you want a toggle like the sales panel's.
+- **Product cards:** they link to `/products/:id`. That shows a 404 page until Person B's `ProductDetail` route is added.
+- **Styling:** Tailwind CSS v4 is set up, with no config file needed. Just use utility classes.
 
 ## Team Workflow
 
