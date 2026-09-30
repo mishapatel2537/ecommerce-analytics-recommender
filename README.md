@@ -279,6 +279,7 @@ GET /api/analytics/sales-trend?from=2026-01-01&productId=<productId>
   ```
 
   `from` and `to` are `YYYY-MM-DD` strings, or `''` when a side has no limit. They come from the dashboard's date filter, so all three charts show the same period. `DashboardLayout.jsx` also exports `SegmentedControl` if you want a toggle like the sales panel's.
+- **Product photos:** they live in `client/public/products/`, one per seeded product; sources and licences are in [docs/image-credits.md](docs/image-credits.md). To show a product's photo, use `import { ProductImage } from '../components/ProductCard'` and then `<ProductImage product={p} className="..." />`. It shows a plain placeholder when a product has no photo. The shared schema is unchanged: the file name comes from the product name.
 - **Product cards:** they link to `/products/:id`. That shows a 404 page until Person B's `ProductDetail` route is added.
 - **Styling:** Tailwind CSS v4 is set up, with no config file needed. Just use utility classes.
 

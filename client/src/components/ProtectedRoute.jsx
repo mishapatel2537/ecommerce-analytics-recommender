@@ -10,7 +10,11 @@ export default function ProtectedRoute({ adminOnly = false, children }) {
   const location = useLocation();
 
   if (loading) {
-    return <div className="p-8 text-center text-gray-500">Loading…</div>;
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center" aria-label="Loading">
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-900" />
+      </div>
+    );
   }
   if (!user) {
     return <Navigate to="/login" replace state={{ from: location }} />;

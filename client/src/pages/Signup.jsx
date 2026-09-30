@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { errorMessage } from '../api/axios';
-import { AuthCard, ErrorBox, Field, SubmitButton } from './Login';
+import { AuthLayout, ErrorBox, Field, SubmitButton } from './Login';
 
 export default function Signup() {
   const { user, signup } = useAuth();
@@ -32,36 +32,56 @@ export default function Signup() {
   };
 
   return (
-    <AuthCard title="Create an account">
+    <AuthLayout
+      title="Create your account"
+      subtitle="Join in seconds and start shopping."
+      footer={
+        <>
+          Already have an account?{' '}
+          <Link to="/login" className="font-semibold text-indigo-600 hover:text-indigo-800">
+            Log in
+          </Link>
+        </>
+      }
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <ErrorBox>{error}</ErrorBox>}
-        <Field label="Name" name="name" autoComplete="name" value={form.name} onChange={handleChange} />
-        <Field label="Email" name="email" type="email" autoComplete="email" value={form.email} onChange={handleChange} />
+        <Field label="Full name" icon="user" name="name" autoComplete="name" placeholder="Asha Rao" value={form.name} onChange={handleChange} />
+        <Field
+          label="Email"
+          icon="mail"
+          name="email"
+          type="email"
+          autoComplete="email"
+          placeholder="you@example.com"
+          value={form.email}
+          onChange={handleChange}
+        />
         <Field
           label="Password"
+          icon="lock"
           name="password"
           type="password"
           autoComplete="new-password"
           minLength={6}
+          placeholder="At least 6 characters"
           value={form.password}
           onChange={handleChange}
         />
         <Field
           label="Confirm password"
+          icon="lock"
           name="confirm"
           type="password"
           autoComplete="new-password"
+          placeholder="Repeat your password"
           value={form.confirm}
           onChange={handleChange}
         />
-        <SubmitButton disabled={submitting}>{submitting ? 'Creating account…' : 'Sign up'}</SubmitButton>
+        <div className="pt-1">
+          <SubmitButton disabled={submitting}>{submitting ? 'Creating account…' : 'Create account'}</SubmitButton>
+        </div>
       </form>
-      <p className="mt-6 text-center text-sm text-gray-600">
-        Already have an account?{' '}
-        <Link to="/login" className="font-medium text-blue-600 hover:underline">
-          Log in
-        </Link>
-      </p>
-    </AuthCard>
+    </AuthLayout>
   );
 }
