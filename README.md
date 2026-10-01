@@ -116,9 +116,12 @@ Work is split by **feature slice**: every member contributes to the **database, 
 | GET/POST/PUT/DELETE | `/api/products`, `/api/products/:id` | A |
 | GET | `/api/products/categories` | A |
 | GET | `/api/analytics/sales-trend` | A |
-| GET/POST | `/api/cart`, `/api/orders` | B |
-| GET | `/api/analytics/top-products` | B |
-| GET/POST | `/api/products/:id/reviews` | C |
+| GET/POST | `/api/cart` (logged in) | B |
+| PUT/DELETE | `/api/cart/:productId` (logged in) | B |
+| POST | `/api/orders/checkout` (logged in) | B |
+| GET | `/api/orders` (logged in, own orders) | B |
+| GET | `/api/analytics/top-products`, `/api/analytics/low-stock` | B |
+| GET/POST | `/api/products/:id/reviews` (POST needs login) | C |
 | GET | `/api/products/:id/reviews/summary` | C |
 | GET | `/api/analytics/segments` | C |
 | GET | `/api/products/:id/also-bought` | C |
@@ -160,7 +163,7 @@ ecommerce-analytics/
 cd server
 cp .env.example .env       # defaults work for local MongoDB; change JWT_SECRET
 npm install
-npm run seed               # wipes and reloads users, products, orders
+npm run seed:all           # wipes and reloads users, products, orders, then reviews
 npm run dev                # API on http://localhost:5000
 ```
 
@@ -189,11 +192,15 @@ The admin dashboard is at `/admin`.
 | `npm run dev` | Start the API with auto-reload (nodemon) |
 | `npm start` | Start the API |
 | `npm run seed` | Load 100 users, 50 products and 1,000 orders (same data on every run) |
+| `npm run seed:reviews` | Add sample reviews to the seeded products (run after `seed`) |
+| `npm run seed:all` | `seed` then `seed:reviews`: the full demo data set |
+| `npm run seed:orders` | Add extra random orders for the existing customers |
 | `npm run bench` | Before/after timing for the `orders` compound index (see [docs/indexing-notes.md](docs/indexing-notes.md)) |
+| `npm run explain` | `explain()` output for the "also bought" pipeline (see [docs/segments-and-cooccurrence.md](docs/segments-and-cooccurrence.md)) |
 
 ### Seed data
 
-`npm run seed` wipes and reloads the `users`, `products` and `orders` collections. It does not touch `reviews`. The data is built so every pipeline has something to find:
+`npm run seed` wipes and reloads the `users`, `products` and `orders` collections, and empties `reviews` and `carts`. Run `npm run seed:all` to get reviews back. The data is built so every pipeline has something to find:
 
 - **Orders:** 1,000 orders over the last 18 months, with a November/December peak and steady growth.
 - **Order status:** each order is `pending`, `shipped`, `delivered` or `cancelled`, always lowercase. The sales trend leaves out cancelled orders.
@@ -250,38 +257,26 @@ GET /api/analytics/sales-trend?from=2026-01-01&productId=<productId>
 - Months with no orders are left out of `data`. The chart fills them in with zero.
 - The pipeline and the index are explained in [docs/indexing-notes.md](docs/indexing-notes.md).
 
-## Plugging In Your Feature (Persons B and C)
+## Integration Notes (A + B + C merged)
+
+The three branches were merged into one app. What changed while integrating:
 
 **Server**
-- **Register your route file:** add one line to `server/src/routes/index.js`. The lines for B and C are already there, commented out.
-- **Add your analytics endpoint:** add one `router.get(...)` line to `server/src/routes/analyticsRoutes.js`. Every route in that file already requires an admin login.
-- **Protect your own routes:**
-
-  ```js
-  const auth = require('../middleware/auth');                 // sets req.user = { id, role }
-  const requireAdmin = require('../middleware/requireAdmin');  // use after auth
-  router.post('/', auth, checkout);
-  ```
-
-- **Order data:** the seed script writes orders straight to the `orders` collection, using the shared Order shape above. Person B's `Order.js` model will read the same documents.
-- **Order index:** `orders` already has the compound index `{ orderDate: 1, "items.product": 1 }`. Top-products queries that filter by date can use it too.
+- **One Order shape.** Person B's `Order` model now uses the shared schema (`user`, `items[{ product, name, price, quantity }]`, `total`, `orderDate`, `status`). Checkout, order history, top products, segments and "also bought" all read the same documents the seed writes.
+- **Indexes on `orders`:** `{ orderDate: 1, "items.product": 1 }` (sales trend, top products by date), `{ "items.product": 1 }` ("also bought") and `{ user: 1, orderDate: -1 }` (order history, segments).
+- **Carts** live in their own `carts` collection, one per user. Adding to the cart checks the product exists and the quantity is a whole number of at least 1.
+- **Segments use USD tiers:** Bronze under $500, Silver $500–1,500, Gold $1,500–3,000, Platinum $3,000+. The endpoint also takes the dashboard's `from` / `to`.
+- **Real auth everywhere.** Person C's review routes use the JWT `auth` middleware; posting a review needs a login and each user can review a product once (409 otherwise).
+- **Removed placeholders** from the feature branches (stub auth, stub User/Product/Order models, dev routes, duplicate seed scripts) in favour of the shared ones.
 
 **Client**
-- **Pages:** add your routes to `client/src/App.jsx`. There's a comment marking where B's pages go. Pages that need a login go inside `<Route element={<ProtectedRoute />}>`.
-- **API calls:** use `import api, { errorMessage } from '../api/axios'`. It sends the token for you. If the server rejects the token, the user is logged out automatically.
-- **Login info:** `useAuth()` from `context/AuthContext.jsx` gives you `{ user, isAdmin, login, signup, logout }`.
-- **Dashboard panels:** in `pages/AdminDashboard.jsx`, swap your placeholder for your chart:
+- **One dashboard date filter.** Every panel (sales trend, top products, customer segments) receives the same `from` / `to`; low stock is always current.
+- **One design system.** All pages use the same Tailwind look: stone/slate neutrals, one indigo accent, real product photos, no gradients.
+- **Shared helpers:** `utils/format.js` (prices, dates, "2 days ago"), `components/Toast.jsx` (`useToast()` for confirmations), `components/Icon.jsx`, `ProductImage` from `components/ProductCard.jsx`, and `useCart()` from `context/CartContext.jsx` (cart items and the navbar badge count).
+- **Interactions:** quick add from product cards, cart badge, quantity steppers, expandable order rows, clickable rating bars that filter reviews, star input with keyboard support, hover-linked charts (top products, segments donut and tier list).
+- **Product photos** are in `client/public/products/`; sources and licences are in [docs/image-credits.md](docs/image-credits.md).
 
-  ```jsx
-  <DashboardPanel title="Top products" description="...">
-    <TopProductsChart from={range.from} to={range.to} />
-  </DashboardPanel>
-  ```
-
-  `from` and `to` are `YYYY-MM-DD` strings, or `''` when a side has no limit. They come from the dashboard's date filter, so all three charts show the same period. `DashboardLayout.jsx` also exports `SegmentedControl` if you want a toggle like the sales panel's.
-- **Product photos:** they live in `client/public/products/`, one per seeded product; sources and licences are in [docs/image-credits.md](docs/image-credits.md). To show a product's photo, use `import { ProductImage } from '../components/ProductCard'` and then `<ProductImage product={p} className="..." />`. It shows a plain placeholder when a product has no photo. The shared schema is unchanged: the file name comes from the product name.
-- **Product cards:** they link to `/products/:id`. That shows a 404 page until Person B's `ProductDetail` route is added.
-- **Styling:** Tailwind CSS v4 is set up, with no config file needed. Just use utility classes.
+More detail: [docs/indexing-notes.md](docs/indexing-notes.md) (sales trend and the compound index) and [docs/segments-and-cooccurrence.md](docs/segments-and-cooccurrence.md) (segments and "also bought").
 
 ## Team Workflow
 

@@ -1,157 +1,243 @@
-import { useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Icon from './Icon';
-import { Avatar, Logo } from './Navbar';
+import Button, { IconButton } from './ui/Button';
+import Dialog from './ui/Dialog';
+import Menu, { MenuItem } from './ui/Menu';
+import SegmentedControl from './ui/SegmentedControl';
+import { Avatar, Logo } from './ui/Brand';
+import { formatDate } from '../utils/format';
 
 /**
- * Admin dashboard shell: dark sidebar + sticky top bar + panel grid.
+ * Admin dashboard shell: collapsible dark sidebar + sticky top bar + panel grid.
  *
  *   <DashboardLayout title="..." filters={<DateRangeFilter ... />}>
  *     <DashboardPanel id="sales" title="Sales trend" icon="trendingUp" wide>...</DashboardPanel>
- *     <DashboardPanel id="top-products" title="Top products" icon="chart">...</DashboardPanel>
  *   </DashboardLayout>
  *
  * Panels sit in a 2-column grid on large screens; `wide` spans both columns.
  */
 
-// Sidebar "Analytics" links jump to panels by id. Persons B / C: keep these ids on your panels.
+// Sidebar links jump to panels by id (and highlight while that panel is on screen)
 const SECTIONS = [
-  { href: '#sales', label: 'Sales trend', icon: 'trendingUp' },
-  { href: '#top-products', label: 'Top products', icon: 'chart' },
-  { href: '#segments', label: 'Customer segments', icon: 'users' },
+  { id: 'overview', label: 'Overview', icon: 'grid' },
+  { id: 'sales', label: 'Sales analytics', icon: 'trendingUp' },
+  { id: 'top-products', label: 'Products', icon: 'chart' },
+  { id: 'segments', label: 'Customers', icon: 'users' },
+  { id: 'inventory', label: 'Inventory', icon: 'cube' },
 ];
 
-function Sidebar({ onNavigate }) {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+const COLLAPSE_KEY = 'dashboard:sidebar-collapsed';
+const readCollapsed = () => {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
 
-  const item = ({ isActive }) =>
-    `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+/** Which section is currently in view */
+function useScrollSpy(ids) {
+  const [active, setActive] = useState(ids[0]);
+  useEffect(() => {
+    const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
+    if (!els.length) return undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActive(visible[0].target.id);
+      },
+      { rootMargin: '-96px 0px -55% 0px' }
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [ids.join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  return active;
+}
+
+function Sidebar({ collapsed = false, active, onNavigate, onToggle }) {
+  const item = (isActive) =>
+    `group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${collapsed ? 'justify-center' : ''} ${
       isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white'
     }`;
 
+  // Hover label when the sidebar is collapsed
+  const Tip = ({ children }) =>
+    collapsed ? (
+      <span className="pointer-events-none absolute left-full z-50 ml-3 rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium whitespace-nowrap text-white opacity-0 shadow-pop ring-1 ring-white/10 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+        {children}
+      </span>
+    ) : null;
+
   return (
-    <div className="flex h-full flex-col bg-slate-950 px-4 py-5">
-      <div className="px-2">
-        <Logo dark />
+    <div className="flex h-full flex-col bg-slate-950 px-3 py-5">
+      <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between px-2'}`}>
+        <Logo dark compact={collapsed} to="/admin" />
       </div>
 
-      <nav className="mt-8 flex-1 space-y-8 overflow-y-auto">
-        <div className="space-y-1">
-          <NavLink to="/admin" end className={item} onClick={onNavigate}>
-            <Icon name="grid" className="h-5 w-5" /> Overview
-          </NavLink>
-          <NavLink to="/" end className={item} onClick={onNavigate}>
-            <Icon name="store" className="h-5 w-5" /> Storefront
-          </NavLink>
+      <nav className="mt-8 flex-1 space-y-7 overflow-y-auto" aria-label="Dashboard">
+        <div>
+          {!collapsed && <div className="px-3 text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Analytics</div>}
+          <ul className="mt-2 space-y-1">
+            {SECTIONS.map((s) => {
+              const isActive = active === s.id;
+              return (
+                <li key={s.id}>
+                  <a href={`#${s.id}`} onClick={onNavigate} className={item(isActive)} aria-current={isActive ? 'true' : undefined}>
+                    {isActive && <span className="absolute top-2 bottom-2 left-0 w-0.5 rounded-full bg-brand-400" aria-hidden="true" />}
+                    <Icon name={s.icon} className="h-5 w-5 shrink-0" />
+                    {collapsed ? <span className="sr-only">{s.label}</span> : s.label}
+                    <Tip>{s.label}</Tip>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
         </div>
 
         <div>
-          <div className="px-3 text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Analytics</div>
-          <div className="mt-2 space-y-1">
-            {SECTIONS.map((s) => (
-              <a
-                key={s.href}
-                href={s.href}
-                onClick={onNavigate}
-                className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
-              >
-                <Icon name={s.icon} className="h-5 w-5" /> {s.label}
-              </a>
-            ))}
-          </div>
+          {!collapsed && <div className="px-3 text-[11px] font-semibold tracking-wider text-slate-500 uppercase">Store</div>}
+          <ul className="mt-2 space-y-1">
+            <li>
+              <Link to="/shop" className={item(false)} onClick={onNavigate}>
+                <Icon name="store" className="h-5 w-5 shrink-0" />
+                {collapsed ? <span className="sr-only">Storefront</span> : 'Storefront'}
+                {!collapsed && <Icon name="arrowUpRight" className="ml-auto h-4 w-4 opacity-50" />}
+                <Tip>Storefront</Tip>
+              </Link>
+            </li>
+          </ul>
         </div>
       </nav>
 
-      {user && (
-        <div className="mt-4 flex items-center gap-3 rounded-xl bg-white/5 p-3 ring-1 ring-white/10">
-          <Avatar name={user.name} className="h-9 w-9 text-xs ring-slate-950" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-white">{user.name}</div>
-            <div className="truncate text-xs text-slate-400">{user.email}</div>
-          </div>
-          <button
-            onClick={() => {
-              logout();
-              navigate('/login');
-            }}
-            title="Log out"
-            aria-label="Log out"
-            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-white"
-          >
-            <Icon name="logout" className="h-5 w-5" />
-          </button>
-        </div>
+      {onToggle && (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={`mt-4 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-500 transition hover:bg-white/5 hover:text-white ${
+            collapsed ? 'justify-center' : ''
+          }`}
+        >
+          <Icon name={collapsed ? 'expand' : 'collapse'} className="h-5 w-5" />
+          {!collapsed && 'Collapse'}
+        </button>
       )}
     </div>
   );
 }
 
 export default function DashboardLayout({ title, subtitle, filters, children }) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const active = useScrollSpy(SECTIONS.map((s) => s.id));
+
+  const toggle = () =>
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(COLLAPSE_KEY, c ? '0' : '1');
+      } catch {
+        /* storage unavailable: just don't remember */
+      }
+      return !c;
+    });
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   return (
-    <div className="min-h-screen bg-stone-50">
+    <div className="min-h-dvh bg-stone-50">
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">
-        <Sidebar />
+      <aside className={`fixed inset-y-0 left-0 z-30 hidden transition-[width] duration-300 ease-[var(--ease-snappy)] lg:block ${collapsed ? 'w-[76px]' : 'w-64'}`}>
+        <Sidebar collapsed={collapsed} active={active} onToggle={toggle} />
       </aside>
 
       {/* Mobile drawer */}
-      {drawerOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 w-72 shadow-2xl">
-            <Sidebar onNavigate={() => setDrawerOpen(false)} />
-          </aside>
-        </div>
-      )}
+      <Dialog open={drawerOpen} onClose={() => setDrawerOpen(false)} variant="left" hideHeader>
+        <Sidebar active={active} onNavigate={() => setDrawerOpen(false)} />
+      </Dialog>
 
-      <div className="lg:pl-64">
+      <div className={`transition-[padding] duration-300 ease-[var(--ease-snappy)] ${collapsed ? 'lg:pl-[76px]' : 'lg:pl-64'}`}>
         {/* Top bar */}
-        <header className="sticky top-0 z-20 border-b border-slate-200/70 bg-white/80 backdrop-blur-lg">
-          <div className="flex flex-col gap-4 px-4 py-4 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"
-                onClick={() => setDrawerOpen(true)}
-                aria-label="Open menu"
-              >
-                <Icon name="menu" className="h-6 w-6" />
-              </button>
-              <div>
-                <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">{title}</h1>
-                {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
-              </div>
+        <header className="sticky top-0 z-20 border-b border-stone-200/80 bg-white/85 backdrop-blur-xl">
+          <div className="flex items-center gap-3 px-4 py-3 sm:px-8">
+            <IconButton icon="menu" label="Open menu" className="lg:hidden" onClick={() => setDrawerOpen(true)} />
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">{title}</h1>
+              {subtitle && <p className="hidden truncate text-sm text-slate-500 sm:block">{subtitle}</p>}
             </div>
-            {filters}
+            <div className="hidden xl:block">{filters}</div>
+            {user && (
+              <Menu
+                label="Account menu"
+                buttonClassName="gap-2 p-1 sm:pr-2"
+                button={
+                  <>
+                    <Avatar name={user.name} className="h-8 w-8 text-xs" />
+                    <span className="hidden text-left leading-tight sm:block">
+                      <span className="block text-sm font-semibold text-slate-800">{user.name}</span>
+                      <span className="block text-xs text-slate-500">Administrator</span>
+                    </span>
+                    <Icon name="chevronDown" className="hidden h-4 w-4 text-slate-400 sm:block" />
+                  </>
+                }
+                header={
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">{user.name}</p>
+                    <p className="truncate text-xs text-slate-500">{user.email}</p>
+                  </div>
+                }
+              >
+                <MenuItem to="/shop" icon="store">
+                  Storefront
+                </MenuItem>
+                <MenuItem to="/orders" icon="cube">
+                  My orders
+                </MenuItem>
+                <div className="my-1.5 h-px bg-stone-100" />
+                <MenuItem onClick={handleLogout} icon="logout" tone="danger">
+                  Log out
+                </MenuItem>
+              </Menu>
+            )}
           </div>
+          {/* Filters get their own row below xl */}
+          <div className="border-t border-stone-100 px-4 py-2.5 sm:px-8 xl:hidden">{filters}</div>
         </header>
 
         <main className="px-4 py-6 sm:px-8 sm:py-8">
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">{children}</div>
+          <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-6 lg:grid-cols-2">{children}</div>
         </main>
       </div>
     </div>
   );
 }
 
-export function DashboardPanel({ id, title, description, icon, actions, wide = false, children }) {
+export function DashboardPanel({ id, title, description, icon, actions, wide = false, className = '', children }) {
   return (
     <section
       id={id}
-      className={`min-w-0 scroll-mt-28 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6 ${wide ? 'lg:col-span-2' : ''}`}
+      aria-labelledby={id ? `${id}-title` : undefined}
+      className={`min-w-0 scroll-mt-36 animate-fade-up rounded-2xl border border-stone-200/80 bg-white p-5 shadow-card transition-shadow hover:shadow-lift sm:p-6 xl:scroll-mt-24 ${
+        wide ? 'lg:col-span-2' : ''
+      } ${className}`}
     >
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
+        <div className="flex min-w-0 items-start gap-3">
           {icon && (
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-stone-100 text-slate-600 ring-1 ring-stone-200">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-stone-100 text-slate-600 ring-1 ring-stone-200/80">
               <Icon name={icon} className="h-5 w-5" />
             </span>
           )}
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          <div className="min-w-0">
+            <h2 id={id ? `${id}-title` : undefined} className="text-base font-semibold text-slate-900">
+              {title}
+            </h2>
             {description && <p className="text-sm text-slate-500">{description}</p>}
           </div>
         </div>
@@ -162,26 +248,8 @@ export function DashboardPanel({ id, title, description, icon, actions, wide = f
   );
 }
 
-// Segmented toggle used by panels (e.g. Revenue / Orders, Chart / Table)
-export function SegmentedControl({ options, value, onChange, label }) {
-  return (
-    <div role="group" aria-label={label} className="inline-flex rounded-xl bg-slate-100 p-1">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          aria-pressed={value === o.value}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-            value === o.value ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/70' : 'text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          {o.icon && <Icon name={o.icon} className="h-4 w-4" />}
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+// Re-exported so existing panels keep importing it from here
+export { SegmentedControl };
 
 // ---------- Date range filter (applies to every panel) ----------
 
@@ -229,38 +297,42 @@ export function DateRangeFilter({ value, onChange }) {
     onChange({ preset: 'custom', from: custom.from, to: custom.to });
   };
 
-  const dateInput =
-    'rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-slate-800 shadow-sm focus:border-slate-400 focus:ring-4 focus:ring-stone-200 focus:outline-none';
+  const rangeText =
+    value.from || value.to ? `${value.from ? formatDate(value.from) : 'Start'} – ${value.to ? formatDate(value.to) : 'Today'}` : 'All time';
 
   return (
-    <div className="flex flex-col items-start gap-2 lg:items-end">
-      <SegmentedControl label="Date range" options={PRESETS} value={value.preset} onChange={selectPreset} />
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="hidden items-center gap-1.5 text-sm text-slate-500 2xl:flex">
+        <Icon name="calendar" className="h-4 w-4" /> {rangeText}
+      </span>
+      <div className="scrollbar-none max-w-full overflow-x-auto">
+        <SegmentedControl label="Date range" options={PRESETS} value={value.preset} onChange={selectPreset} />
+      </div>
       {value.preset === 'custom' && (
-        <form onSubmit={applyCustom} className="flex flex-wrap items-center gap-2">
+        <form onSubmit={applyCustom} className="flex animate-fade-in flex-wrap items-center gap-2">
           <input
             type="date"
             aria-label="From date"
             value={custom.from}
+            max={custom.to || undefined}
             onChange={(e) => setCustom({ ...custom, from: e.target.value })}
-            className={dateInput}
+            className="field h-9 w-auto py-0"
           />
           <span className="text-sm text-slate-400">to</span>
           <input
             type="date"
             aria-label="To date"
             value={custom.to}
+            min={custom.from || undefined}
             onChange={(e) => setCustom({ ...custom, to: e.target.value })}
-            className={dateInput}
+            className="field h-9 w-auto py-0"
           />
-          <button
-            type="submit"
-            className="rounded-lg bg-slate-900 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
-          >
+          <Button type="submit" size="sm">
             Apply
-          </button>
+          </Button>
         </form>
       )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="w-full text-sm text-rose-600">{error}</p>}
     </div>
   );
 }

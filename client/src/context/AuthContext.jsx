@@ -53,6 +53,10 @@ export function AuthProvider({ children }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// Where a logged-in user belongs: admins -> dashboard, customers -> shop.
+// The landing page (/) is only for visitors who aren't logged in.
+export const homeFor = (u) => (u?.role === 'admin' ? '/admin' : '/shop');
+
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');

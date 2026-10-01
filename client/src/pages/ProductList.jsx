@@ -1,28 +1,35 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import api, { errorMessage } from '../api/axios';
+import { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import api from '../api/axios';
 import ProductCard, { ProductCardSkeleton } from '../components/ProductCard';
-import SearchFilterBar, { DebouncedInput } from '../components/SearchFilterBar';
+import FilterPanel, { ActiveFilters, SORT_OPTIONS } from '../components/FilterPanel';
 import Icon from '../components/Icon';
+import Button from '../components/ui/Button';
+import Dialog from '../components/ui/Dialog';
+import DebouncedInput from '../components/ui/DebouncedInput';
+import Pagination from '../components/ui/Pagination';
+import { Breadcrumbs } from '../components/ui/PageHeader';
+import { EmptyState, ErrorState } from '../components/ui/States';
+import useApi from '../hooks/useApi';
 import { useAuth } from '../context/AuthContext';
 
 const PAGE_SIZE = 12;
 const DEFAULT_SORT = 'name_asc';
 
-// 1 … 4 5 [6] 7 8 … 12
-function pageList(current, total) {
-  const pages = new Set([1, total, current - 1, current, current + 1]);
-  const sorted = [...pages].filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
-  const out = [];
-  sorted.forEach((p, i) => {
-    if (i > 0 && p - sorted[i - 1] > 1) out.push('…');
-    out.push(p);
-  });
-  return out;
-}
+// Remember whether the filter sidebar is hidden (desktop)
+const SIDEBAR_KEY = 'shop:filters-hidden';
+const readHidden = () => {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
 
 export default function ProductList() {
   const { user } = useAuth();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sidebarHidden, setSidebarHidden] = useState(readHidden);
 
   // Filters live in the URL so a filtered view survives refresh and can be shared
   const [params, setParams] = useSearchParams();
@@ -39,34 +46,14 @@ export default function ProductList() {
     [params]
   );
 
-  const [categories, setCategories] = useState([]);
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const { data: catData } = useApi(() => api.get('/products/categories'), []);
+  const categories = catData?.categories || [];
 
-  useEffect(() => {
-    api
-      .get('/products/categories')
-      .then((res) => setCategories(res.data.categories))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError('');
-
-    const query = { ...filters, limit: PAGE_SIZE, inStock: filters.inStock || undefined };
-    api
-      .get('/products', { params: query })
-      .then((res) => !cancelled && setResult(res.data))
-      .catch((err) => !cancelled && setError(errorMessage(err, 'Could not load products')))
-      .finally(() => !cancelled && setLoading(false));
-
-    return () => {
-      cancelled = true;
-    };
-  }, [filters]);
+  const { data: result, error, loading, reload } = useApi(
+    () => api.get('/products', { params: { ...filters, limit: PAGE_SIZE, inStock: filters.inStock || undefined } }),
+    [filters],
+    { fallback: 'Could not load products' }
+  );
 
   // Any filter change resets to page 1; empty values are removed from the URL
   const updateFilters = useCallback(
@@ -75,11 +62,8 @@ export default function ProductList() {
         (prev) => {
           const next = new URLSearchParams(prev);
           for (const [key, value] of Object.entries(changes)) {
-            if (value === '' || value === false || value == null || (key === 'sort' && value === DEFAULT_SORT)) {
-              next.delete(key);
-            } else {
-              next.set(key, String(value));
-            }
+            if (value === '' || value === false || value == null || (key === 'sort' && value === DEFAULT_SORT)) next.delete(key);
+            else next.set(key, String(value));
           }
           if (!('page' in changes)) next.delete('page');
           return next;
@@ -92,181 +76,187 @@ export default function ProductList() {
 
   const resetFilters = () => setParams({}, { replace: true });
 
+  const toggleSidebar = () =>
+    setSidebarHidden((h) => {
+      try {
+        localStorage.setItem(SIDEBAR_KEY, h ? '0' : '1');
+      } catch {
+        /* storage unavailable: just don't remember */
+      }
+      return !h;
+    });
+
   const goToPage = (page) => {
     updateFilters({ page: page > 1 ? page : '' });
-    document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const totalProducts = categories.reduce((sum, c) => sum + c.count, 0);
+  const filterCount = [filters.category, filters.minPrice || filters.maxPrice, filters.inStock].filter(Boolean).length;
   const firstLoad = loading && !result;
+  const from = result ? (filters.page - 1) * PAGE_SIZE + 1 : 0;
+  const to = result ? Math.min(result.total, from + result.products.length - 1) : 0;
+  const title = filters.category || (filters.search ? `Results for “${filters.search}”` : 'All products');
 
   return (
-    <div className="pb-16">
-      {/* Hero */}
-      <section className="border-b border-stone-200 bg-white">
-        <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 py-12 sm:px-6 lg:grid-cols-[1.1fr_1fr] lg:py-16">
-          <div className="animate-fade-up">
-            <span className="inline-flex items-center gap-2 rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-slate-600">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              {totalProducts > 0 ? `${totalProducts} products across ${categories.length} categories` : 'Now open'}
-            </span>
-            <h1 className="mt-5 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl sm:leading-[1.1]">
-              {user ? `Welcome back, ${user.name.split(' ')[0]}.` : 'Good things,'}
-              <span className="block text-slate-400">{user ? 'What are you looking for today?' : 'thoughtfully chosen.'}</span>
-            </h1>
-            <p className="mt-5 max-w-lg text-base leading-relaxed text-slate-600 sm:text-lg">
-              Tech, books, clothing, kitchen, fitness and beauty. Everyday essentials in one place, easy to search and filter.
-            </p>
-
-            <div className="relative mt-8 max-w-lg">
-              <Icon name="search" className="pointer-events-none absolute top-1/2 left-4 h-5 w-5 -translate-y-1/2 text-slate-400" />
-              <label htmlFor="search" className="sr-only">
-                Search products
-              </label>
-              <DebouncedInput
-                id="search"
-                type="search"
-                placeholder="Search for a product…"
-                value={filters.search}
-                onChange={(search) => updateFilters({ search })}
-                className="w-full rounded-xl border border-stone-300 bg-white py-3.5 pr-4 pl-12 text-base text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-stone-200 focus:outline-none"
-              />
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-slate-500">Popular:</span>
-              {['Laptop', 'Coffee', 'Running', 'Yoga'].map((term) => (
-                <button
-                  key={term}
-                  onClick={() => updateFilters({ search: term })}
-                  className="rounded-md px-2 py-0.5 text-slate-700 underline decoration-stone-300 underline-offset-4 hover:decoration-slate-700"
-                >
-                  {term}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <HeroCollage />
-        </div>
-      </section>
-
-      {/* Catalog */}
-      <section id="catalog" className="mx-auto max-w-7xl scroll-mt-20 px-4 pt-8 sm:px-6">
-        <SearchFilterBar
-          filters={filters}
-          categories={categories}
-          total={result?.total ?? 0}
-          onChange={updateFilters}
-          onReset={resetFilters}
+    <div className="mx-auto max-w-7xl px-4 pt-8 pb-20 sm:px-6">
+      {/* ---------- Header ---------- */}
+      <header className="animate-fade-up border-b border-stone-200 pb-6">
+        {user && <p className="mb-2 text-sm font-medium text-slate-500">Welcome back, {user.name.split(' ')[0]}. What are you after today?</p>}
+        <Breadcrumbs
+          items={[
+            ...(user ? [] : [{ label: 'Home', to: '/' }]),
+            { label: 'Shop', to: filters.category ? '/shop' : undefined },
+            ...(filters.category ? [{ label: filters.category }] : []),
+          ]}
         />
-
-        {error && (
-          <div role="alert" className="mt-6 flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <Icon name="alert" className="h-5 w-5 shrink-0" /> {error}
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">{title}</h1>
+            <p className="mt-1 text-sm text-slate-500" aria-live="polite">
+              {result ? (result.total ? `Showing ${from}–${to} of ${result.total} products` : 'No matching products') : 'Loading products…'}
+            </p>
           </div>
-        )}
-
-        {!error && !loading && result?.products.length === 0 && (
-          <div className="mt-10 flex flex-col items-center rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
-              <Icon name="search" className="h-7 w-7" />
-            </span>
-            <p className="mt-4 text-lg font-semibold text-slate-900">No products match your filters</p>
-            <p className="mt-1 text-sm text-slate-500">Try a different search or remove a filter.</p>
-            <button
-              onClick={resetFilters}
-              className="mt-5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Clear all filters
-            </button>
+          <div className="group relative w-full sm:w-80">
+            <label htmlFor="shop-search" className="sr-only">
+              Search products
+            </label>
+            <Icon name="search" className="pointer-events-none absolute top-1/2 left-3.5 h-4.5 w-4.5 -translate-y-1/2 text-slate-400 transition group-focus-within:text-brand-600" />
+            <DebouncedInput
+              id="shop-search"
+              type="search"
+              placeholder="Search products…"
+              value={filters.search}
+              onChange={(search) => updateFilters({ search })}
+              className="field h-10 pl-10"
+            />
           </div>
-        )}
-
-        <div
-          className={`mt-8 grid grid-cols-1 gap-x-6 gap-y-10 transition-opacity sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 ${
-            loading && result ? 'opacity-60' : ''
-          }`}
-        >
-          {firstLoad
-            ? Array.from({ length: 8 }, (_, i) => <ProductCardSkeleton key={i} />)
-            : result?.products.map((p, i) => (
-                <div key={p._id} className="animate-fade-up" style={{ animationDelay: `${Math.min(i, 11) * 30}ms` }}>
-                  <ProductCard product={p} />
-                </div>
-              ))}
         </div>
+      </header>
 
-        {result?.pages > 1 && (
-          <nav className="mt-10 flex items-center justify-center gap-1.5" aria-label="Pagination">
-            <PageButton disabled={filters.page <= 1} onClick={() => goToPage(filters.page - 1)} aria-label="Previous page">
-              <Icon name="chevronLeft" className="h-4 w-4" />
-            </PageButton>
-            {pageList(filters.page, result.pages).map((p, i) =>
-              p === '…' ? (
-                <span key={`gap-${i}`} className="px-2 text-slate-400">
-                  …
-                </span>
-              ) : (
-                <PageButton key={p} active={p === filters.page} onClick={() => goToPage(p)} aria-current={p === filters.page ? 'page' : undefined}>
-                  {p}
-                </PageButton>
-              )
+      {/* ---------- Toolbar ---------- */}
+      <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Desktop: hide / show the filter sidebar */}
+          <Button
+            variant="secondary"
+            size="sm"
+            icon="sliders"
+            onClick={toggleSidebar}
+            aria-expanded={!sidebarHidden}
+            aria-controls="shop-filters"
+            className="max-lg:hidden"
+          >
+            {sidebarHidden ? 'Show filters' : 'Hide filters'}
+            {sidebarHidden && filterCount > 0 && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-600 px-1 text-[11px] text-white">{filterCount}</span>
             )}
-            <PageButton disabled={filters.page >= result.pages} onClick={() => goToPage(filters.page + 1)} aria-label="Next page">
-              <Icon name="chevronRight" className="h-4 w-4" />
-            </PageButton>
-          </nav>
-        )}
-      </section>
+          </Button>
+          {/* Mobile: filters open in a bottom sheet */}
+          <Button variant="secondary" size="sm" icon="sliders" onClick={() => setSheetOpen(true)} className="lg:hidden">
+            Filters
+            {filterCount > 0 && <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-600 px-1 text-[11px] text-white">{filterCount}</span>}
+          </Button>
+          <ActiveFilters filters={filters} onChange={updateFilters} onReset={resetFilters} />
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="sort" className="text-sm whitespace-nowrap text-slate-500 max-sm:sr-only">
+            Sort by
+          </label>
+          <select id="sort" value={filters.sort} onChange={(e) => updateFilters({ sort: e.target.value })} className="field field-select h-9 w-auto py-0 font-medium">
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* ---------- Sidebar + grid ---------- */}
+      <div
+        className={`grid transition-[grid-template-columns,column-gap] duration-300 ease-[var(--ease-snappy)] ${
+          sidebarHidden ? 'lg:grid-cols-[0px_1fr] lg:gap-x-0' : 'lg:grid-cols-[240px_1fr] lg:gap-x-10'
+        }`}
+      >
+        <aside
+          id="shop-filters"
+          aria-label="Filters"
+          className={`hidden min-w-0 overflow-clip transition-opacity duration-200 lg:block ${sidebarHidden ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
+          inert={sidebarHidden ? '' : undefined}
+        >
+          <div className="sticky top-20 max-h-[calc(100dvh-6rem)] w-[240px] overflow-y-auto overscroll-contain rounded-2xl border border-stone-200/80 bg-white p-5 shadow-card [scrollbar-width:thin]">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-900">Filters</h2>
+              {filterCount > 0 && (
+                <button type="button" onClick={() => updateFilters({ category: '', minPrice: '', maxPrice: '', inStock: false })} className="text-xs font-semibold text-brand-700 hover:text-brand-900">
+                  Reset
+                </button>
+              )}
+            </div>
+            <FilterPanel filters={filters} categories={categories} onChange={updateFilters} />
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          {error && !result ? (
+            <ErrorState title="We couldn’t load the products" text={error} onRetry={reload} />
+          ) : !loading && result?.products.length === 0 ? (
+            <EmptyState
+              icon="search"
+              title="No products found"
+              text="Nothing matches these filters. Try a different search or remove a filter."
+              action={
+                <Button variant="secondary" onClick={resetFilters}>
+                  Clear all filters
+                </Button>
+              }
+            />
+          ) : (
+            <div
+              className={`grid grid-cols-1 gap-5 transition-opacity duration-200 min-[480px]:grid-cols-2 ${sidebarHidden ? 'lg:grid-cols-3 xl:grid-cols-4' : 'xl:grid-cols-3'} ${
+                loading && result ? 'opacity-50' : ''
+              }`}
+              aria-busy={loading}
+            >
+              {firstLoad
+                ? Array.from({ length: 6 }, (_, i) => <ProductCardSkeleton key={i} />)
+                : result?.products.map((p, i) => (
+                    <div key={p._id} className="animate-fade-up" style={{ animationDelay: `${Math.min(i, 11) * 40}ms` }}>
+                      <ProductCard product={p} />
+                    </div>
+                  ))}
+            </div>
+          )}
+
+          {result?.pages > 1 && (
+            <div className="mt-12">
+              <Pagination page={filters.page} pages={result.pages} onChange={goToPage} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Mobile filter sheet */}
+      <Dialog
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        variant="bottom"
+        title="Filters"
+        footer={
+          <div className="flex gap-3">
+            <Button variant="secondary" className="flex-1" onClick={resetFilters}>
+              Reset
+            </Button>
+            <Button className="flex-1" onClick={() => setSheetOpen(false)}>
+              Show {result?.total ?? ''} results
+            </Button>
+          </div>
+        }
+      >
+        <div className="px-5 py-5">
+          <FilterPanel filters={filters} categories={categories} onChange={updateFilters} />
+        </div>
+      </Dialog>
     </div>
-  );
-}
-
-// Real product photos in a small editorial collage (hidden on small screens)
-const HERO_ITEMS = [
-  { name: 'Laptop Pro 14"', slug: 'laptop-pro-14', search: 'Laptop' },
-  { name: 'Running Shoes', slug: 'running-shoes', search: 'Running' },
-  { name: 'Coffee Maker', slug: 'coffee-maker', search: 'Coffee' },
-];
-
-function HeroCollage() {
-  const [big, a, b] = HERO_ITEMS;
-  const Tile = ({ item, className }) => (
-    <Link
-      to={`/?search=${encodeURIComponent(item.search)}`}
-      className={`group relative block overflow-hidden rounded-2xl bg-stone-100 ${className}`}
-    >
-      <img
-        src={`/products/${item.slug}.webp`}
-        alt={item.name}
-        className="h-full w-full object-cover transition duration-700 ease-out group-hover:scale-[1.03]"
-      />
-      <span className="absolute bottom-3 left-3 rounded-lg bg-white/95 px-2.5 py-1 text-xs font-medium text-slate-800 shadow-sm">
-        {item.name}
-      </span>
-    </Link>
-  );
-  return (
-    <div className="hidden h-[26rem] grid-cols-5 grid-rows-2 gap-3 lg:grid">
-      <Tile item={big} className="col-span-3 row-span-2" />
-      <Tile item={a} className="col-span-2" />
-      <Tile item={b} className="col-span-2" />
-    </div>
-  );
-}
-
-function PageButton({ children, active, ...props }) {
-  return (
-    <button
-      {...props}
-      className={`flex h-10 min-w-10 items-center justify-center rounded-xl px-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-        active
-          ? 'bg-slate-900 text-white'
-          : 'bg-white text-slate-700 ring-1 ring-stone-200 hover:ring-stone-300 disabled:hover:ring-stone-200'
-      }`}
-    >
-      {children}
-    </button>
   );
 }

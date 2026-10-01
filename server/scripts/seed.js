@@ -158,8 +158,16 @@ async function seed() {
   const db = mongoose.connection.db;
   console.log(`Connected to ${mongoose.connection.name}`);
 
-  await Promise.all([User.deleteMany({}), Product.deleteMany({}), db.collection('orders').deleteMany({})]);
-  console.log('Cleared users, products, orders');
+  // Reviews and carts point at user/product ids that are about to change, so clear them too.
+  // Run `npm run seed:reviews` afterwards (or `npm run seed:all`) to regenerate reviews.
+  await Promise.all([
+    User.deleteMany({}),
+    Product.deleteMany({}),
+    db.collection('orders').deleteMany({}),
+    db.collection('reviews').deleteMany({}),
+    db.collection('carts').deleteMany({}),
+  ]);
+  console.log('Cleared users, products, orders, reviews, carts');
 
   // Users
   const [adminHash, customerHash] = await Promise.all([bcrypt.hash('admin123', 10), bcrypt.hash('password123', 10)]);

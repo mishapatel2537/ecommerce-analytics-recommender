@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { homeFor, useAuth } from '../context/AuthContext';
+import { Spinner } from './ui/Button';
 
 /**
  * <Route element={<ProtectedRoute />}>            logged-in users
@@ -11,8 +12,8 @@ export default function ProtectedRoute({ adminOnly = false, children }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center" aria-label="Loading">
-        <span className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-900" />
+      <div className="flex min-h-[60vh] items-center justify-center text-slate-400" role="status" aria-label="Loading">
+        <Spinner className="h-7 w-7" />
       </div>
     );
   }
@@ -20,7 +21,7 @@ export default function ProtectedRoute({ adminOnly = false, children }) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
   if (adminOnly && !isAdmin) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={homeFor(user)} replace />;
   }
   return children ?? <Outlet />;
 }
