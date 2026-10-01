@@ -1,10 +1,12 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../api/axios'; // from Person A
+import { useAuth } from './AuthContext';
 
 const CartContext = createContext();
 export const useCart = () => useContext(CartContext);
 
 export function CartProvider({ children }) {
+  const { user } = useAuth();
   const [cart, setCart] = useState({ items: [] });
 
   const fetchCart = useCallback(async () => {
@@ -16,7 +18,10 @@ export function CartProvider({ children }) {
     }
   }, []);
 
-  useEffect(() => { fetchCart(); }, [fetchCart]);
+  useEffect(() => {
+  if (user) fetchCart();
+  else setCart({ items: [] });
+}, [user, fetchCart]);
 
   const addToCart = async (productId, quantity = 1) => {
     await api.post('/cart', { productId, quantity });
