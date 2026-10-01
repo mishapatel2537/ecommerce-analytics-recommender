@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { createReview, getReviews, getRatingSummary } = require('../controllers/reviewController');
-const { protect } = require('../middleware/auth'); //JWT middleware
+const { protect } = require('../middleware/auth');
 
 router.get('/', getReviews);
 router.get('/summary', getRatingSummary);

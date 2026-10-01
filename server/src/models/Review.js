@@ -10,7 +10,7 @@ const reviewSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// One review per user per product; also speeds up per-product lookups
+// One review per user per product; also serves per-product lookups
 reviewSchema.index({ product: 1, user: 1 }, { unique: true });
 
-module.exports = mongoose.model('Review', reviewSchema);
+module.exports = mongoose.models.Review || mongoose.model('Review', reviewSchema);
